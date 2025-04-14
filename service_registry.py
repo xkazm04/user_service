@@ -1,78 +1,74 @@
 import consul
-import socket
 import os
+import socket
+import threading
 import time
 import logging
-import uuid
-import threading
 
-logger = logging.getLogger("service_registry")
+logger = logging.getLogger("user_service")
 
 class ServiceRegistry:
     def __init__(self):
         self.consul_host = os.getenv("CONSUL_HOST", "consul")
         self.consul_port = int(os.getenv("CONSUL_PORT", "8500"))
         self.service_name = os.getenv("SERVICE_NAME", "user")
-        self.service_id = f"{self.service_name}-{uuid.uuid4()}"
         self.service_port = int(os.getenv("SERVICE_PORT", "8002"))
-        self.health_check_interval = "10s"
-        self.consul_client = consul.Consul(host=self.consul_host, port=self.consul_port)
+        # Use the container name as registered in docker-compose
+        self.service_id = f"{self.service_name}-{socket.gethostname()}"
+        
+        # Create Consul client
+        self.consul = consul.Consul(host=self.consul_host, port=self.consul_port)
         self.is_registered = False
-
-    def get_host_ip(self):
-        """Get the host IP that's reachable from Consul"""
-        try:
-            # In Docker networking, we use the service name
-            return self.service_name
-        except:
-            # Fallback to getting the actual hostname
-            return socket.gethostname()
+        self.heartbeat_thread = None
+        logger.info(f"Service registry initialized for {self.service_name}")
 
     def register_service(self):
         """Register service with Consul"""
         try:
-            service_ip = self.get_host_ip()
+            # Get container IP address instead of hostname
+            container_ip = socket.gethostbyname(socket.gethostname())
             
-            # Register service
-            self.consul_client.agent.service.register(
+            # Register service with IP address, not hostname
+            self.consul.agent.service.register(
                 name=self.service_name,
                 service_id=self.service_id,
-                address=service_ip,
+                address=container_ip,  # Use IP address instead of hostname
                 port=self.service_port,
                 check={
-                    "http": f"http://{service_ip}:{self.service_port}/health",
-                    "interval": self.health_check_interval
+                    "http": f"http://{container_ip}:{self.service_port}/health",
+                    "interval": "100s",
+                    "timeout": "5s"
                 }
             )
-            
             self.is_registered = True
-            logger.info(f"Service {self.service_name} registered with Consul at {service_ip}:{self.service_port}")
-            return True
+            logger.info(f"Service registered with Consul: {self.service_name} at {container_ip}:{self.service_port}")
         except Exception as e:
-            logger.error(f"Failed to register service with Consul: {str(e)}")
-            return False
+            logger.error(f"Failed to register service: {str(e)}")
 
     def deregister_service(self):
         """Deregister service from Consul"""
-        if self.is_registered:
-            try:
-                self.consul_client.agent.service.deregister(self.service_id)
+        try:
+            if self.is_registered:
+                self.consul.agent.service.deregister(service_id=self.service_id)
                 self.is_registered = False
-                logger.info(f"Service {self.service_name} deregistered from Consul")
-                return True
-            except Exception as e:
-                logger.error(f"Failed to deregister service from Consul: {str(e)}")
-                return False
-        return True
+                logger.info(f"Service deregistered from Consul: {self.service_id}")
+        except Exception as e:
+            logger.error(f"Failed to deregister service: {str(e)}")
 
     def start_heartbeat(self):
-        """Start a background thread to maintain service registration"""
-        def heartbeat():
-            while True:
+        """Start heartbeat thread"""
+        if self.heartbeat_thread is None:
+            self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+            self.heartbeat_thread.start()
+            logger.info("Heartbeat thread started")
+
+    def _heartbeat_loop(self):
+        """Heartbeat loop to keep service registered"""
+        while True:
+            try:
                 if not self.is_registered:
                     self.register_service()
-                time.sleep(30)  # Check every 30 seconds
-        
-        thread = threading.Thread(target=heartbeat, daemon=True)
-        thread.start()
-        logger.info("Service registry heartbeat started")
+                time.sleep(300)  
+            except Exception as e:
+                logger.error(f"Heartbeat error: {str(e)}")
+                time.sleep(50) 

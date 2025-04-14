@@ -9,6 +9,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from contextlib import asynccontextmanager
 import time
 import json
+from routes import api_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,14 +33,25 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.include_router(api_router, prefix="", tags=["Users"])
+
 Instrumentator().instrument(app).expose(app)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    if request.headers.get("X-From-Gateway") != "true":
-        return JSONResponse(status_code=403, content={"detail": "Direct access forbidden"})
-    start_time = time.time()
+    # Log all headers for debugging
+    headers = dict(request.headers)
+    logger.info(f"Incoming request headers: {json.dumps(headers, default=str)}")
     
+    allowed_paths = ["/health", "/metrics"]
+    is_allowed_path = any(request.url.path.startswith(path) for path in allowed_paths)
+    from_gateway = request.headers.get("X-From-Gateway") == "true"
+    
+    if not (from_gateway or is_allowed_path):
+        logger.warning(f"Direct access attempt to {request.url.path} - Forbidden")
+        return JSONResponse(status_code=403, content={"detail": "Direct access forbidden"})
+    
+    start_time = time.time()
     path = request.url.path
     method = request.method
     
@@ -73,14 +85,13 @@ def get_db():
         yield db
     finally:
         db.close()
-
+        
 
 @app.get("/health")
 def health_check():
     """Health check endpoint for service discovery"""
     try:
         db = database.SessionLocal()
-        db.execute("SELECT 1")
         db.close()
         return {"status": "healthy"}
     except Exception as e:

@@ -24,7 +24,6 @@ else:
     if "localhost" in DATABASE_URL and in_docker:
         db_host = os.getenv("DB_HOST", "user_db")
         DATABASE_URL = DATABASE_URL.replace("localhost", db_host)
-        # In Docker, use default PostgreSQL port if not specified
         if ":5433" in DATABASE_URL:
             DATABASE_URL = DATABASE_URL.replace(":5433", ":5432")
             

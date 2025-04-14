@@ -6,7 +6,7 @@ from sqlalchemy import Column, String, Integer, DateTime
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID, primary_key=True) 
+    id = Column(String, primary_key=True) 
     email = Column(String, unique=True, nullable=False)
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)

@@ -2,27 +2,36 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
 from models.models import User
-from auth import verify_gateway_request 
+from auth import verify_gateway_request
+from pydantic import BaseModel
+
+# Create Pydantic models for request validation
+class UserRegistration(BaseModel):
+    id: str
+    email: str
+    first_name: str
+    last_name: str
+    credits: int = 100
+    plan: str = "free"
+
 router = APIRouter(tags=["User"])
 
 @router.post("/register", dependencies=[Depends(verify_gateway_request)])
-def register_user(user_data: dict, db: Session = Depends(get_db)):
-    clerk_user_id = user_data.get("id")  # Get Clerk User ID
-    email = user_data.get("email")
+def register_user(user_data: UserRegistration, db: Session = Depends(get_db)):
+    clerk_user_id = user_data.id 
+    email = user_data.email
 
-    # Check if user already exists
     existing_user = db.query(User).filter(User.id == clerk_user_id).first()
     if existing_user:
         return {"message": "User already registered."}
-
-    # Create a new user
+    
     user = User(
         id=clerk_user_id,
         email=email,
-        first_name=user_data.get("first_name"),
-        last_name=user_data.get("last_name"),
-        credits=100,  # Default initial credits
-        plan="free"  # Default plan
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        credits=user_data.credits,  
+        plan=user_data.plan  
     )
     db.add(user)
     db.commit()
